@@ -51,8 +51,8 @@ export default function TemplateCanvas({ shop }: TemplateCanvasProps) {
     if (!canvasRef.current) return
 
     const canvas = new fabric.Canvas(canvasRef.current, {
-      width: 600,
-      height: 600,
+      width: 800,
+      height: 800,
       backgroundColor: '#ffffff',
       preserveObjectStacking: true,
     })
@@ -79,9 +79,14 @@ export default function TemplateCanvas({ shop }: TemplateCanvasProps) {
 
     // Load existing template if available
     if (shop.template_config && Object.keys(shop.template_config).length > 0) {
-      canvas.loadFromJSON(shop.template_config, () => {
-        canvas.renderAll()
-      })
+      try {
+        canvas.loadFromJSON(shop.template_config, () => {
+          canvas.renderAll()
+        })
+      } catch (err) {
+        console.error('Failed to load template config:', err)
+        setupDefaultLayout(canvas)
+      }
     } else {
       // Setup default template layout if empty
       setupDefaultLayout(canvas)
@@ -93,69 +98,69 @@ export default function TemplateCanvas({ shop }: TemplateCanvasProps) {
   }, [shop])
 
   const setupDefaultLayout = (canvas: fabric.Canvas) => {
-    // 1. Product Image Placeholder
+    // 1. Product Image Placeholder (Centered in 800x800)
     const productBox = new fabric.Rect({
-      left: 100,
-      top: 120,
-      width: 400,
-      height: 360,
+      left: 150,
+      top: 150,
+      width: 500,
+      height: 460,
       fill: '#f1f5f9',
       stroke: '#cbd5e1',
       strokeWidth: 2,
-      strokeDashArray: [6, 6],
-      rx: 12,
-      ry: 12,
+      strokeDashArray: [8, 8],
+      rx: 16,
+      ry: 16,
       // @ts-ignore
       placeholderType: 'product_image',
     })
 
     const productLabel = new fabric.Text('Main Product Image Placeholder', {
-      left: 170,
-      top: 290,
-      fontSize: 16,
+      left: 260,
+      top: 360,
+      fontSize: 18,
       fontFamily: 'Inter',
       fill: '#64748b',
       selectable: false,
     })
 
-    // 2. Brand Logo Placeholder
+    // 2. Brand Logo Placeholder (Top Left)
     const brandLogo = new fabric.Rect({
-      left: 30,
-      top: 30,
-      width: 100,
-      height: 50,
+      left: 40,
+      top: 40,
+      width: 140,
+      height: 70,
       fill: '#f8fafc',
       stroke: '#94a3b8',
       strokeWidth: 1.5,
       strokeDashArray: [4, 4],
-      rx: 6,
-      ry: 6,
+      rx: 8,
+      ry: 8,
       // @ts-ignore
       placeholderType: 'brand_logo',
     })
 
-    // 3. Shop Logo Placeholder
+    // 3. Shop Logo Placeholder (Top Right)
     const shopLogo = new fabric.Rect({
-      left: 470,
-      top: 30,
-      width: 100,
-      height: 50,
+      left: 620,
+      top: 40,
+      width: 140,
+      height: 70,
       fill: '#f8fafc',
       stroke: '#94a3b8',
       strokeWidth: 1.5,
       strokeDashArray: [4, 4],
-      rx: 6,
-      ry: 6,
+      rx: 8,
+      ry: 8,
       // @ts-ignore
       placeholderType: 'shop_logo',
     })
 
-    // 4. Product Title Textbox
+    // 4. Product Title Textbox (Bottom)
     const titleText = new fabric.Textbox('Product Title Here\n(Support Multiline)', {
-      left: 30,
-      top: 500,
-      width: 540,
-      fontSize: 24,
+      left: 40,
+      top: 640,
+      width: 720,
+      fontSize: 32,
       fontFamily: 'Comfortaa',
       fontWeight: 'bold',
       fill: '#0f172a',
@@ -451,12 +456,12 @@ export default function TemplateCanvas({ shop }: TemplateCanvasProps) {
         </div>
 
         {/* Center: Canvas Viewport */}
-        <div className="flex flex-col items-center justify-center rounded-2xl bg-gray-100 p-6 shadow-inner lg:col-span-6">
-          <div className="relative overflow-hidden rounded-xl border border-gray-300 bg-white shadow-2xl">
+        <div className="flex flex-col items-center justify-center rounded-2xl bg-gray-100 p-6 shadow-inner lg:col-span-6 overflow-hidden">
+          <div className="relative max-w-full overflow-auto rounded-xl border border-gray-300 bg-white p-2 shadow-2xl">
             <canvas ref={canvasRef} />
           </div>
           <p className="mt-3 text-xs text-gray-400">
-            600 x 600 Canvas Area • Drag, scale or rotate elements freely
+            800 x 800 px Canvas Area • Drag, scale or rotate elements freely
           </p>
         </div>
 
