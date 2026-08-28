@@ -3,9 +3,22 @@
 import { useEffect, useState, use } from 'react'
 import { Shop } from '@/types'
 import { createClient } from '@/lib/supabase/client'
-import TemplateCanvas from '@/components/template-builder/TemplateCanvas'
+import dynamic from 'next/dynamic'
 import { Loader2, ArrowLeft } from 'lucide-react'
 import Link from 'next/link'
+
+const TemplateCanvas = dynamic(
+  () => import('@/components/template-builder/TemplateCanvas'),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex h-96 flex-col items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-indigo-600" />
+        <span className="mt-3 text-sm text-gray-500">Initializing canvas...</span>
+      </div>
+    ),
+  }
+)
 
 export default function ShopTemplatePage({
   params,
