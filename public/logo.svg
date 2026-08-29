@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" fill="none">
+  <defs>
+    <linearGradient id="bs-grad" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#4F46E5"/>
+      <stop offset="100%" stop-color="#7C3AED"/>
+    </linearGradient>
+  </defs>
+  <!-- Bag handle -->
+  <path d="M14 17 C14 11 26 11 26 17" stroke="url(#bs-grad)" stroke-width="2.4" stroke-linecap="round" fill="none"/>
+  <!-- Bag body -->
+  <rect x="8" y="17" width="24" height="17" rx="4" fill="url(#bs-grad)"/>
+  <!-- Sparkle inside bag -->
+  <path d="M20 21 L20.9 24.1 L24 25 L20.9 25.9 L20 29 L19.1 25.9 L16 25 L19.1 24.1 Z" fill="white" opacity="0.95"/>
+</svg>

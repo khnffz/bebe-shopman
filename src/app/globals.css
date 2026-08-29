@@ -1,6 +1,14 @@
 @import url('https://fonts.googleapis.com/css2?family=Comfortaa:wght@400;600;700&family=Inter:wght@400;500;600;700&family=Montserrat:wght@400;600;700&display=swap');
 @import "tailwindcss";
 
+@font-face {
+  font-family: 'Agrandir';
+  src: url('/fonts/Agrandir.woff2') format('woff2'),
+       url('/fonts/Agrandir.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
 :root {
   --background: #ffffff;
   --foreground: #171717;

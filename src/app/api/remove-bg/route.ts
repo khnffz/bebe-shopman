@@ -16,41 +16,33 @@ export async function POST(req: NextRequest) {
     if (contentType.includes('application/json')) {
       const { imageUrl } = await req.json()
       if (!imageUrl) {
-        return NextResponse.json(
-          { error: 'imageUrl is required' },
-          { status: 400 }
-        )
+        return NextResponse.json({ error: 'imageUrl is required' }, { status: 400 })
       }
 
-      // Fetch the raw image from the given URL
       const imgRes = await fetch(imageUrl)
       if (!imgRes.ok) {
         return NextResponse.json(
-          { error: 'Failed to fetch image from provided imageUrl' },
+          { error: `Failed to fetch raw image (${imgRes.status})` },
           { status: 400 }
         )
       }
       imageBuffer = await imgRes.arrayBuffer()
     } else {
-      // Direct binary or formData
       const formData = await req.formData()
       const file = formData.get('image') as File | null
       if (!file) {
-        return NextResponse.json(
-          { error: 'No image file provided in form data' },
-          { status: 400 }
-        )
+        return NextResponse.json({ error: 'No image file provided' }, { status: 400 })
       }
       imageBuffer = await file.arrayBuffer()
     }
 
-    // Call Hugging Face Inference API for background removal
+    // Direct Inference API call
     const hfResponse = await fetch(
       'https://api-inference.huggingface.co/models/briaai/RMBG-1.4',
       {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${apiKey}`,
+          Authorization: `Bearer ${apiKey.trim()}`,
           'Content-Type': 'application/octet-stream',
         },
         body: imageBuffer,
@@ -66,7 +58,6 @@ export async function POST(req: NextRequest) {
     }
 
     const resultBuffer = await hfResponse.arrayBuffer()
-
     return new NextResponse(resultBuffer, {
       status: 200,
       headers: {

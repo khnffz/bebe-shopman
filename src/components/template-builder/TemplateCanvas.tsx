@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { fabric } from 'fabric'
 import {
   Type,
@@ -10,20 +10,25 @@ import {
   MoveUp,
   MoveDown,
   RotateCcw,
-  Sparkles,
   ArrowLeft,
   Loader2,
   CheckCircle,
+  Upload,
 } from 'lucide-react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
+import { uploadAsset } from '@/lib/supabase/storage'
 import { Shop } from '@/types'
+
+const CANVAS_SIZE = 800 // Internal resolution (always 800x800)
+const VIEWPORT_PADDING = 40 // Padding around canvas in viewport
 
 interface TemplateCanvasProps {
   shop: Shop
 }
 
 const FONTS = [
+  { name: 'Agrandir', label: 'Agrandir (Modern)' },
   { name: 'Comfortaa', label: 'Comfortaa (Rounded)' },
   { name: 'Inter', label: 'Inter (Modern Sans)' },
   { name: 'Montserrat', label: 'Montserrat (Bold Clean)' },
@@ -35,6 +40,9 @@ const FONTS = [
 export default function TemplateCanvas({ shop }: TemplateCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const fabricCanvasRef = useRef<fabric.Canvas | null>(null)
+  const viewportRef = useRef<HTMLDivElement>(null)
+  const bgInputRef = useRef<HTMLInputElement>(null)
+  const isMountedRef = useRef(true)
 
   const [selectedObject, setSelectedObject] = useState<fabric.Object | null>(null)
   const [textColor, setTextColor] = useState('#1e293b')
@@ -43,16 +51,45 @@ export default function TemplateCanvas({ shop }: TemplateCanvasProps) {
   const [textAlign, setTextAlign] = useState('left')
   const [saving, setSaving] = useState(false)
   const [saveSuccess, setSaveSuccess] = useState(false)
+  const [uploadingBg, setUploadingBg] = useState(false)
+
 
   const supabase = createClient()
 
-  // Initialize Fabric Canvas
+  /**
+   * Apply zoom using Fabric.js native zoom — keeps mouse coords aligned.
+   * The canvas element is resized to (CANVAS_SIZE * zoom), while the
+   * internal coordinate space stays 800x800.
+   */
+  const applyZoom = useCallback((canvas: fabric.Canvas, zoom: number) => {
+    canvas.setZoom(zoom)
+    canvas.setDimensions(
+      { width: CANVAS_SIZE * zoom, height: CANVAS_SIZE * zoom },
+    )
+    canvas.renderAll()
+  }, [])
+
+  /**
+   * Calculate the zoom that makes the 800x800 canvas fit inside the viewport container.
+   */
+  const calcFitZoom = useCallback(() => {
+    const vp = viewportRef.current
+    if (!vp) return 0.6
+    const availW = vp.clientWidth - VIEWPORT_PADDING * 2
+    const availH = vp.clientHeight - VIEWPORT_PADDING * 2
+    const fit = Math.min(availW / CANVAS_SIZE, availH / CANVAS_SIZE)
+    // Clamp between 0.3 and 1.5
+    return Math.round(Math.min(1.5, Math.max(0.3, fit)) * 100) / 100
+  }, [])
+
+  // Initialize Fabric Canvas (800x800 internal resolution)
   useEffect(() => {
+    isMountedRef.current = true
     if (!canvasRef.current) return
 
     const canvas = new fabric.Canvas(canvasRef.current, {
-      width: 800,
-      height: 800,
+      width: CANVAS_SIZE,
+      height: CANVAS_SIZE,
       backgroundColor: '#ffffff',
       preserveObjectStacking: true,
     })
@@ -61,6 +98,7 @@ export default function TemplateCanvas({ shop }: TemplateCanvasProps) {
 
     // Selection event listeners
     const handleSelection = () => {
+      if (!isMountedRef.current || !canvas.getContext()) return
       const activeObj = canvas.getActiveObject()
       setSelectedObject(activeObj || null)
 
@@ -75,29 +113,69 @@ export default function TemplateCanvas({ shop }: TemplateCanvasProps) {
 
     canvas.on('selection:created', handleSelection)
     canvas.on('selection:updated', handleSelection)
-    canvas.on('selection:cleared', () => setSelectedObject(null))
+    canvas.on('selection:cleared', () => {
+      if (isMountedRef.current) setSelectedObject(null)
+    })
 
     // Load existing template if available
     if (shop.template_config && Object.keys(shop.template_config).length > 0) {
       try {
         canvas.loadFromJSON(shop.template_config, () => {
-          canvas.renderAll()
+          if (isMountedRef.current && canvas.getContext()) {
+            // Apply fit zoom after load
+            const fitZ = calcFitZoom()
+            applyZoom(canvas, fitZ)
+          }
         })
       } catch (err) {
         console.error('Failed to load template config:', err)
-        setupDefaultLayout(canvas)
+        if (isMountedRef.current && canvas.getContext()) {
+          setupDefaultLayout(canvas)
+          const fitZ = calcFitZoom()
+          applyZoom(canvas, fitZ)
+        }
       }
     } else {
-      // Setup default template layout if empty
       setupDefaultLayout(canvas)
+      // Defer fit zoom so viewport has rendered
+      requestAnimationFrame(() => {
+        if (isMountedRef.current && canvas.getContext()) {
+          const fitZ = calcFitZoom()
+          applyZoom(canvas, fitZ)
+        }
+      })
+    }
+
+    // Auto-fit on viewport resize (ResizeObserver)
+    const vp = viewportRef.current
+    let ro: ResizeObserver | null = null
+    if (vp) {
+      ro = new ResizeObserver(() => {
+        if (!isMountedRef.current || !canvas.getContext()) return
+        const fitZ = calcFitZoom()
+        applyZoom(canvas, fitZ)
+      })
+      ro.observe(vp)
     }
 
     return () => {
-      canvas.dispose()
+      isMountedRef.current = false
+      ro?.disconnect()
+      try {
+        if (canvas && canvas.getContext()) {
+          canvas.clear()
+          canvas.dispose()
+        }
+      } catch (e) {
+        // ignore cleanup error if context already lost
+      }
+      fabricCanvasRef.current = null
     }
-  }, [shop])
+  }, [shop, applyZoom, calcFitZoom])
 
   const setupDefaultLayout = (canvas: fabric.Canvas) => {
+    if (!canvas.getContext()) return
+
     // 1. Product Image Placeholder (Centered in 800x800)
     const productBox = new fabric.Rect({
       left: 150,
@@ -114,7 +192,7 @@ export default function TemplateCanvas({ shop }: TemplateCanvasProps) {
       placeholderType: 'product_image',
     })
 
-    const productLabel = new fabric.Text('Main Product Image Placeholder', {
+    const productLabel = new fabric.Text('', {
       left: 260,
       top: 360,
       fontSize: 18,
@@ -173,11 +251,69 @@ export default function TemplateCanvas({ shop }: TemplateCanvasProps) {
     canvas.renderAll()
   }
 
-  // --- Canvas Actions ---
+  // --- Background Upload & Setting ---
+  const handleBackgroundUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
 
+    setUploadingBg(true)
+    try {
+      const { url, error } = await uploadAsset(file, 'shops')
+      if (error || !url) {
+        throw new Error(error || 'Failed to upload background image')
+      }
+
+      const canvas = fabricCanvasRef.current
+      if (canvas && canvas.getContext()) {
+        fabric.Image.fromURL(
+          url,
+          (img) => {
+            if (img && canvas.getContext()) {
+              const scale = Math.max(800 / (img.width || 1), 800 / (img.height || 1))
+              img.set({
+                originX: 'center',
+                originY: 'center',
+                left: 400,
+                top: 400,
+                scaleX: scale,
+                scaleY: scale,
+                selectable: false,
+                evented: false,
+              })
+              canvas.setBackgroundImage(img, () => {
+                if (canvas.getContext()) canvas.renderAll()
+              })
+            }
+          },
+          { crossOrigin: 'anonymous' }
+        )
+      }
+    } catch (err: any) {
+      alert('Error uploading background: ' + err.message)
+    } finally {
+      setUploadingBg(false)
+      if (bgInputRef.current) bgInputRef.current.value = ''
+    }
+  }
+
+  const handleRemoveBackground = () => {
+    const canvas = fabricCanvasRef.current
+    if (canvas && canvas.getContext()) {
+      // @ts-ignore
+      canvas.setBackgroundImage(null, () => {
+        if (canvas.getContext()) {
+          canvas.setBackgroundColor('#ffffff', () => {
+            if (canvas.getContext()) canvas.renderAll()
+          })
+        }
+      })
+    }
+  }
+
+  // --- Canvas Actions ---
   const addText = (type: 'title' | 'description' | 'custom') => {
     const canvas = fabricCanvasRef.current
-    if (!canvas) return
+    if (!canvas || !canvas.getContext()) return
 
     let textContent = 'Sample Text'
     let size = 20
@@ -214,13 +350,7 @@ export default function TemplateCanvas({ shop }: TemplateCanvasProps) {
 
   const addPlaceholderBox = (type: 'product_image' | 'brand_logo' | 'shop_logo') => {
     const canvas = fabricCanvasRef.current
-    if (!canvas) return
-
-    const labelMap = {
-      product_image: 'Product Image',
-      brand_logo: 'Brand Logo',
-      shop_logo: 'Shop Logo',
-    }
+    if (!canvas || !canvas.getContext()) return
 
     const sizeMap = {
       product_image: { w: 300, h: 300 },
@@ -250,7 +380,7 @@ export default function TemplateCanvas({ shop }: TemplateCanvasProps) {
 
   const deleteSelected = () => {
     const canvas = fabricCanvasRef.current
-    if (!canvas) return
+    if (!canvas || !canvas.getContext()) return
 
     const activeObj = canvas.getActiveObject()
     if (activeObj) {
@@ -263,7 +393,7 @@ export default function TemplateCanvas({ shop }: TemplateCanvasProps) {
   const bringForward = () => {
     const canvas = fabricCanvasRef.current
     const activeObj = canvas?.getActiveObject()
-    if (canvas && activeObj) {
+    if (canvas && activeObj && canvas.getContext()) {
       canvas.bringForward(activeObj)
       canvas.renderAll()
     }
@@ -272,21 +402,22 @@ export default function TemplateCanvas({ shop }: TemplateCanvasProps) {
   const sendBackward = () => {
     const canvas = fabricCanvasRef.current
     const activeObj = canvas?.getActiveObject()
-    if (canvas && activeObj) {
+    if (canvas && activeObj && canvas.getContext()) {
       canvas.sendBackwards(activeObj)
       canvas.renderAll()
     }
   }
 
-  // Update active text properties
   const updateActiveText = (prop: string, value: any) => {
     const canvas = fabricCanvasRef.current
     const activeObj = canvas?.getActiveObject()
-    if (activeObj && activeObj.type === 'textbox') {
+    if (activeObj && activeObj.type === 'textbox' && canvas?.getContext()) {
       activeObj.set(prop as any, value)
-      canvas?.renderAll()
+      canvas.renderAll()
     }
   }
+
+
 
   const handleSaveTemplate = async () => {
     const canvas = fabricCanvasRef.current
@@ -296,8 +427,20 @@ export default function TemplateCanvas({ shop }: TemplateCanvasProps) {
     setSaveSuccess(false)
 
     try {
-      // Export canvas with custom placeholder attributes
+      // Temporarily reset zoom to 1:1 so saved JSON has clean coordinates
+      const currentZoom = canvas.getZoom()
+      canvas.setZoom(1)
+      canvas.setDimensions({ width: CANVAS_SIZE, height: CANVAS_SIZE })
+
       const jsonConfig = canvas.toJSON(['placeholderType', 'id', 'name'])
+
+      // Restore zoom
+      canvas.setZoom(currentZoom)
+      canvas.setDimensions({
+        width: CANVAS_SIZE * currentZoom,
+        height: CANVAS_SIZE * currentZoom,
+      })
+      canvas.renderAll()
 
       const { error } = await supabase
         .from('shops')
@@ -319,9 +462,9 @@ export default function TemplateCanvas({ shop }: TemplateCanvasProps) {
   }
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col h-[calc(100vh-7rem)]">
       {/* Top Bar Header */}
-      <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl bg-white p-4 shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl bg-white p-4 shadow-sm shrink-0">
         <div className="flex items-center gap-3">
           <Link
             href="/dashboard/shops"
@@ -334,7 +477,7 @@ export default function TemplateCanvas({ shop }: TemplateCanvasProps) {
               Template Builder: <span className="text-indigo-600">{shop.name}</span>
             </h1>
             <p className="text-xs text-gray-500">
-              Define component positions, fonts, and sizes for this shop&apos;s product images.
+              Atur posisi elemen, background image, font, dan ukuran untuk gambar produk toko ini.
             </p>
           </div>
         </div>
@@ -343,10 +486,14 @@ export default function TemplateCanvas({ shop }: TemplateCanvasProps) {
           <button
             onClick={() => {
               const canvas = fabricCanvasRef.current
-              if (canvas && confirm('Reset canvas to default layout?')) {
+              if (canvas && canvas.getContext() && confirm('Reset canvas ke layout default?')) {
+                const z = canvas.getZoom()
                 canvas.clear()
                 canvas.setBackgroundColor('#ffffff', () => {
-                  setupDefaultLayout(canvas)
+                  if (canvas.getContext()) {
+                    setupDefaultLayout(canvas)
+                    applyZoom(canvas, z)
+                  }
                 })
               }
             }}
@@ -374,14 +521,62 @@ export default function TemplateCanvas({ shop }: TemplateCanvasProps) {
       </div>
 
       {/* Editor Main Area: Left Toolbar + Center Canvas + Right Inspector */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-        {/* Left Toolbar */}
-        <div className="space-y-4 lg:col-span-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-12 items-stretch flex-1 min-h-0 mt-4 overflow-hidden">
+        {/* Left Toolbar (scrollable) */}
+        <div className="space-y-4 lg:col-span-3 overflow-y-auto max-h-full pr-1">
+          {/* Background Image Upload */}
+          <div className="rounded-2xl bg-white p-5 shadow-sm border border-gray-100">
+            <h3 className="flex items-center text-sm font-semibold text-gray-900">
+              <ImageIcon className="mr-2 h-4 w-4 text-indigo-600" />
+              Template Background
+            </h3>
+            <p className="mt-1 text-xs text-gray-500">
+              Unggah gambar latar khusus untuk template toko ini.
+            </p>
+
+            <input
+              type="file"
+              ref={bgInputRef}
+              onChange={handleBackgroundUpload}
+              accept="image/png, image/jpeg, image/webp"
+              className="hidden"
+            />
+
+            <div className="mt-3 flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={() => bgInputRef.current?.click()}
+                disabled={uploadingBg}
+                className="flex w-full items-center justify-center rounded-xl bg-indigo-50 py-2.5 text-xs font-semibold text-indigo-700 transition hover:bg-indigo-100 disabled:opacity-50"
+              >
+                {uploadingBg ? (
+                  <>
+                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                    Mengunggah Background...
+                  </>
+                ) : (
+                  <>
+                    <Upload className="mr-1.5 h-3.5 w-3.5" />
+                    Upload Background Image
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={handleRemoveBackground}
+                className="w-full rounded-xl border border-gray-200 py-1.5 text-xs font-medium text-gray-500 hover:bg-gray-50"
+              >
+                Hapus Background (Reset Putih)
+              </button>
+            </div>
+          </div>
+
           {/* Add Text Elements */}
-          <div className="rounded-2xl bg-white p-5 shadow-sm">
+          <div className="rounded-2xl bg-white p-5 shadow-sm border border-gray-100">
             <h3 className="flex items-center text-sm font-semibold text-gray-900">
               <Type className="mr-2 h-4 w-4 text-indigo-600" />
-              Add Text Components
+              Komponen Teks
             </h3>
             <div className="mt-3 space-y-2">
               <button
@@ -406,10 +601,10 @@ export default function TemplateCanvas({ shop }: TemplateCanvasProps) {
           </div>
 
           {/* Add Image Placeholders */}
-          <div className="rounded-2xl bg-white p-5 shadow-sm">
+          <div className="rounded-2xl bg-white p-5 shadow-sm border border-gray-100">
             <h3 className="flex items-center text-sm font-semibold text-gray-900">
               <ImageIcon className="mr-2 h-4 w-4 text-indigo-600" />
-              Image Placeholders
+              Placeholder Gambar
             </h3>
             <div className="mt-3 space-y-2">
               <button
@@ -434,7 +629,7 @@ export default function TemplateCanvas({ shop }: TemplateCanvasProps) {
           </div>
 
           {/* Layer Ordering */}
-          <div className="rounded-2xl bg-white p-5 shadow-sm">
+          <div className="rounded-2xl bg-white p-5 shadow-sm border border-gray-100">
             <h3 className="text-sm font-semibold text-gray-900">Layer Controls</h3>
             <div className="mt-3 flex gap-2">
               <button
@@ -455,24 +650,33 @@ export default function TemplateCanvas({ shop }: TemplateCanvasProps) {
           </div>
         </div>
 
-        {/* Center: Canvas Viewport */}
-        <div className="flex flex-col items-center justify-center rounded-2xl bg-gray-100 p-6 shadow-inner lg:col-span-6 overflow-hidden">
-          <div className="relative max-w-full overflow-auto rounded-xl border border-gray-300 bg-white p-2 shadow-2xl">
-            <canvas ref={canvasRef} />
+        {/* Center: Canvas Viewport — auto-fit */}
+        <div className="flex flex-col lg:col-span-6 min-h-0 overflow-hidden">
+
+          {/* Viewport — canvas floats centered inside this area */}
+          <div
+            ref={viewportRef}
+            className="flex-1 min-h-0 flex items-center justify-center rounded-2xl overflow-auto"
+            style={{ background: '#e8e8e8', backgroundImage: 'radial-gradient(circle, #d4d4d4 1px, transparent 1px)', backgroundSize: '20px 20px' }}
+          >
+            <div className="shrink-0" style={{ padding: `${VIEWPORT_PADDING}px` }}>
+              <div
+                className="shadow-2xl"
+                style={{ lineHeight: 0 }}
+              >
+                <canvas ref={canvasRef} />
+              </div>
+            </div>
           </div>
-          <p className="mt-3 text-xs text-gray-400">
-            800 x 800 px Canvas Area • Drag, scale or rotate elements freely
-          </p>
         </div>
 
-        {/* Right: Property Inspector */}
-        <div className="space-y-4 lg:col-span-3">
-          <div className="rounded-2xl bg-white p-5 shadow-sm">
+        {/* Right: Property Inspector (scrollable) */}
+        <div className="space-y-4 lg:col-span-3 overflow-y-auto max-h-full pl-1">
+          <div className="rounded-2xl bg-white p-5 shadow-sm border border-gray-100">
             <h3 className="text-sm font-semibold text-gray-900">Properties</h3>
 
             {selectedObject ? (
               <div className="mt-4 space-y-4">
-                {/* Object Type Badge */}
                 <div className="flex items-center justify-between border-b pb-3">
                   <span className="text-xs text-gray-500">Selected Type</span>
                   <span className="rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-semibold text-indigo-700">
@@ -481,10 +685,8 @@ export default function TemplateCanvas({ shop }: TemplateCanvasProps) {
                   </span>
                 </div>
 
-                {/* Text Formatting Controls */}
                 {selectedObject.type === 'textbox' && (
                   <>
-                    {/* Font Family */}
                     <div>
                       <label className="block text-xs font-medium text-gray-700">
                         Font Family
@@ -505,7 +707,6 @@ export default function TemplateCanvas({ shop }: TemplateCanvasProps) {
                       </select>
                     </div>
 
-                    {/* Font Size */}
                     <div>
                       <div className="flex justify-between text-xs font-medium text-gray-700">
                         <span>Font Size</span>
@@ -525,7 +726,6 @@ export default function TemplateCanvas({ shop }: TemplateCanvasProps) {
                       />
                     </div>
 
-                    {/* Text Color */}
                     <div>
                       <label className="block text-xs font-medium text-gray-700">
                         Text Color
@@ -546,7 +746,6 @@ export default function TemplateCanvas({ shop }: TemplateCanvasProps) {
                       </div>
                     </div>
 
-                    {/* Alignment */}
                     <div>
                       <label className="block text-xs font-medium text-gray-700">
                         Text Alignment
@@ -559,11 +758,10 @@ export default function TemplateCanvas({ shop }: TemplateCanvasProps) {
                               setTextAlign(align)
                               updateActiveText('textAlign', align)
                             }}
-                            className={`flex-1 rounded-lg py-1 text-xs capitalize ${
-                              textAlign === align
+                            className={`flex-1 rounded-lg py-1 text-xs capitalize ${textAlign === align
                                 ? 'bg-white font-semibold text-indigo-600 shadow-sm'
                                 : 'text-gray-600 hover:text-gray-900'
-                            }`}
+                              }`}
                           >
                             {align}
                           </button>
@@ -573,7 +771,6 @@ export default function TemplateCanvas({ shop }: TemplateCanvasProps) {
                   </>
                 )}
 
-                {/* Delete Object Action */}
                 <div className="border-t pt-3">
                   <button
                     onClick={deleteSelected}
@@ -586,7 +783,7 @@ export default function TemplateCanvas({ shop }: TemplateCanvasProps) {
               </div>
             ) : (
               <div className="mt-4 rounded-xl border border-dashed border-gray-200 p-6 text-center text-xs text-gray-400">
-                Click any element on the canvas to inspect and customize its properties.
+                Klik elemen apa saja di kanvas untuk mengubah properti & ukurannya.
               </div>
             )}
           </div>

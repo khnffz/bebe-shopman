@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import { Product, Brand } from '@/types'
 import { createClient } from '@/lib/supabase/client'
 import { uploadAsset } from '@/lib/supabase/storage'
+import { processProductImageOffline } from '@/lib/engine/generator'
 import { X, Upload, Loader2 } from 'lucide-react'
 
 interface ProductModalProps {
@@ -28,6 +29,7 @@ export default function ProductModal({
   const [file, setFile] = useState<File | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [loadingText, setLoadingText] = useState('')
   const [error, setError] = useState<string | null>(null)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -83,8 +85,13 @@ export default function ProductModal({
     try {
       let finalImageUrl = rawImageUrl
 
-      if (file) {
-        const { url, error: uploadErr } = await uploadAsset(file, 'products')
+      if (file && previewUrl) {
+        setLoadingText('Memproses gambar...')
+        const processedBlob = await processProductImageOffline(previewUrl)
+        const processedFile = new File([processedBlob], `processed-${file.name}.png`, { type: 'image/png' })
+
+        setLoadingText('Mengunggah gambar hasil proses...')
+        const { url, error: uploadErr } = await uploadAsset(processedFile, 'products')
         if (uploadErr || !url) {
           throw new Error(uploadErr || 'Failed to upload product image')
         }
@@ -123,6 +130,7 @@ export default function ProductModal({
       setError(err.message || 'An error occurred')
     } finally {
       setLoading(false)
+      setLoadingText('')
     }
   }
 
@@ -199,7 +207,7 @@ export default function ProductModal({
 
           <div>
             <label className="block text-sm font-medium text-gray-700">
-              Raw Product Image
+              Product Image
             </label>
             <input
               type="file"
@@ -256,7 +264,7 @@ export default function ProductModal({
               className="flex items-center rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:bg-indigo-400"
             >
               {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {product ? 'Save Changes' : 'Create Product'}
+              {loading && loadingText ? loadingText : (product ? 'Save Changes' : 'Create Product')}
             </button>
           </div>
         </form>
