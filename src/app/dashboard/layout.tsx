@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import Image from 'next/image'
 import { usePathname, useRouter } from 'next/navigation'
 import { LayoutDashboard, Tag, Store, Package, LogOut } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
@@ -30,8 +31,11 @@ export default function DashboardLayout({
     <div className="flex h-screen bg-gray-100">
       {/* Sidebar */}
       <div className="flex w-64 flex-col bg-white shadow-md">
-        <div className="flex h-16 shrink-0 items-center px-6">
-          <span className="text-xl font-bold text-indigo-600">Bebe Shopman</span>
+        <div className="flex h-16 shrink-0 items-center gap-2.5 px-6">
+          <Image src="/logo.svg" alt="BebeShopman logo" width={32} height={32} />
+          <span className="text-xl font-bold bg-gradient-to-r from-indigo-600 to-violet-600 bg-clip-text text-transparent">
+            BebeShopman
+          </span>
         </div>
         <div className="flex flex-1 flex-col overflow-y-auto pt-5 pb-4">
           <nav className="mt-5 flex-1 space-y-1 px-4 text-sm">
