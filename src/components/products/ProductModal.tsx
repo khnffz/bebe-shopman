@@ -28,6 +28,7 @@ export default function ProductModal({
   const [rawImageUrl, setRawImageUrl] = useState<string | null>(null)
   const [file, setFile] = useState<File | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const [removeBackground, setRemoveBackground] = useState(true)
   const [loading, setLoading] = useState(false)
   const [loadingText, setLoadingText] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -50,6 +51,7 @@ export default function ProductModal({
       setPreviewUrl(null)
     }
     setFile(null)
+    setRemoveBackground(true)
     setError(null)
   }, [product, isOpen, brands])
 
@@ -86,16 +88,25 @@ export default function ProductModal({
       let finalImageUrl = rawImageUrl
 
       if (file && previewUrl) {
-        setLoadingText('Memproses gambar...')
-        const processedBlob = await processProductImageOffline(previewUrl)
-        const processedFile = new File([processedBlob], `processed-${file.name}.png`, { type: 'image/png' })
+        if (removeBackground) {
+          setLoadingText('Memproses gambar (hapus background)...')
+          const processedBlob = await processProductImageOffline(previewUrl)
+          const processedFile = new File([processedBlob], `processed-${file.name}.png`, { type: 'image/png' })
 
-        setLoadingText('Mengunggah gambar hasil proses...')
-        const { url, error: uploadErr } = await uploadAsset(processedFile, 'products')
-        if (uploadErr || !url) {
-          throw new Error(uploadErr || 'Failed to upload product image')
+          setLoadingText('Mengunggah gambar hasil proses...')
+          const { url, error: uploadErr } = await uploadAsset(processedFile, 'products')
+          if (uploadErr || !url) {
+            throw new Error(uploadErr || 'Failed to upload processed product image')
+          }
+          finalImageUrl = url
+        } else {
+          setLoadingText('Mengunggah gambar original...')
+          const { url, error: uploadErr } = await uploadAsset(file, 'products')
+          if (uploadErr || !url) {
+            throw new Error(uploadErr || 'Failed to upload original product image')
+          }
+          finalImageUrl = url
         }
-        finalImageUrl = url
       }
 
       if (product) {
@@ -247,6 +258,34 @@ export default function ProductModal({
                 </div>
               )}
             </div>
+
+            {/* Toggle for Background Removal */}
+            {file && (
+              <div className="mt-4 flex items-center justify-between rounded-xl border border-gray-200 bg-gray-50/50 p-4">
+                <div>
+                  <label className="text-sm font-semibold text-gray-900">
+                    Hapus Background (AI)
+                  </label>
+                  <p className="mt-0.5 text-xs text-gray-500">
+                    Nonaktifkan jika Anda ingin mengunggah gambar aslinya.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setRemoveBackground(!removeBackground)}
+                  className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 ${
+                    removeBackground ? 'bg-indigo-600' : 'bg-gray-200'
+                  }`}
+                >
+                  <span className="sr-only">Toggle background removal</span>
+                  <span
+                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                      removeBackground ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="mt-6 flex justify-end space-x-3">
