@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import Image from 'next/image'
 import { usePathname, useRouter } from 'next/navigation'
-import { LayoutDashboard, Tag, Store, Package, LogOut } from 'lucide-react'
+import { LayoutDashboard, Tag, Store, Package, LogOut, BarChart3, ClipboardList } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 
 const navigation = [
@@ -11,6 +11,14 @@ const navigation = [
   { name: 'Brands', href: '/dashboard/brands', icon: Tag },
   { name: 'Shops', href: '/dashboard/shops', icon: Store },
   { name: 'Products', href: '/dashboard/products', icon: Package },
+  { name: 'Pesanan', href: '/dashboard/orders', icon: ClipboardList },
+  { name: 'Laporan', href: '/dashboard/reports', icon: BarChart3 },
+]
+
+const syncNavigation = [
+  { name: 'Pesanan', href: '/dashboard/sync/orders', icon: Package },
+  { name: 'Keuangan', href: '/dashboard/sync/finance', icon: ClipboardList },
+  { name: 'Produk (Comming Soon)', href: '#', icon: Tag, disabled: true },
 ]
 
 export default function DashboardLayout({
@@ -38,29 +46,60 @@ export default function DashboardLayout({
           </span>
         </div>
         <div className="flex flex-1 flex-col overflow-y-auto pt-5 pb-4">
-          <nav className="mt-5 flex-1 space-y-1 px-4 text-sm">
-            {navigation.map((item) => {
-              const isActive = pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(item.href))
-              return (
-                <Link
-                  key={item.name}
-                  href={item.href}
-                  className={`group flex items-center rounded-md px-2 py-2 font-medium ${
-                    isActive
-                      ? 'bg-indigo-50 text-indigo-600'
-                      : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
-                  }`}
-                >
-                  <item.icon
-                    className={`mr-3 h-5 w-5 flex-shrink-0 ${
-                      isActive ? 'text-indigo-600' : 'text-gray-400 group-hover:text-gray-500'
-                    }`}
-                    aria-hidden="true"
-                  />
-                  {item.name}
-                </Link>
-              )
-            })}
+          <nav className="mt-5 flex-1 space-y-4 px-4 text-sm">
+            <div className="space-y-1">
+              {navigation.map((item) => {
+                const isActive = pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(item.href))
+                return (
+                  <Link
+                    key={item.name}
+                    href={item.href}
+                    className={`group flex items-center rounded-md px-2 py-2 font-medium ${isActive
+                        ? 'bg-indigo-50 text-indigo-600'
+                        : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                      }`}
+                  >
+                    <item.icon
+                      className={`mr-3 h-5 w-5 flex-shrink-0 ${isActive ? 'text-indigo-600' : 'text-gray-400 group-hover:text-gray-500'
+                        }`}
+                      aria-hidden="true"
+                    />
+                    {item.name}
+                  </Link>
+                )
+              })}
+            </div>
+
+            <div className="pt-4 border-t border-gray-200">
+              <p className="px-2 text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+                Pusat Sinkronisasi
+              </p>
+              <div className="space-y-1">
+                {syncNavigation.map((item) => {
+                  const isActive = pathname === item.href
+                  return (
+                    <Link
+                      key={item.name}
+                      href={item.disabled ? '#' : item.href}
+                      className={`group flex items-center rounded-md px-2 py-2 font-medium ${item.disabled
+                          ? 'opacity-50 cursor-not-allowed text-gray-400'
+                          : isActive
+                            ? 'bg-indigo-50 text-indigo-600'
+                            : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                        }`}
+                      onClick={(e) => item.disabled && e.preventDefault()}
+                    >
+                      <item.icon
+                        className={`mr-3 h-5 w-5 flex-shrink-0 ${item.disabled ? 'text-gray-400' : isActive ? 'text-indigo-600' : 'text-gray-400 group-hover:text-gray-500'
+                          }`}
+                        aria-hidden="true"
+                      />
+                      {item.name}
+                    </Link>
+                  )
+                })}
+              </div>
+            </div>
           </nav>
         </div>
         <div className="border-t border-gray-200 p-4">

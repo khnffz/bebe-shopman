@@ -40,3 +40,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local/scratch & data files
+scratch*.cjs
+/example-files/
+/supabase/.temp/
+tqa-timeline.md
