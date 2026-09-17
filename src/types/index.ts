@@ -27,4 +27,13 @@ export interface Product {
   updated_at: string
 }
 
+export interface ProductTemplate {
+  id: string
+  product_id: string
+  shop_id: string
+  template_config: any
+  created_at: string
+  updated_at: string
+}
+
 export * from './orders'

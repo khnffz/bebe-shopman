@@ -45,4 +45,3 @@ next-env.d.ts
 scratch*.cjs
 /example-files/
 /supabase/.temp/
-tqa-timeline.md

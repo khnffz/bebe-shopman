@@ -107,6 +107,22 @@ export default function GenerateImageModal({
       setProgressStep('Menyiapkan gambar produk...')
       const transparentImgUrl = product.raw_image_url
 
+      // Fetch custom product templates for the selected shops
+      const { data: customTemplates } = await supabase
+        .from('product_templates')
+        .select('shop_id, template_config')
+        .eq('product_id', product.id)
+        .in('shop_id', selectedShopIds)
+
+      const customTemplateMap = new Map<string, any>()
+      if (customTemplates) {
+        for (const ct of customTemplates) {
+          if (ct.template_config && Object.keys(ct.template_config).length > 0) {
+            customTemplateMap.set(ct.shop_id, ct.template_config)
+          }
+        }
+      }
+
       // 2. Generate Main Product Image for each selected shop
       const generatedList: GeneratedResult[] = []
 
@@ -115,13 +131,16 @@ export default function GenerateImageModal({
         const targetShop = shops.find((s) => s.id === shopId)
         if (!targetShop) continue
 
-        setProgressStep(`Membuat gambar utama sesuai template: ${targetShop.name} (${i + 1}/${selectedShopIds.length})...`)
+        const hasCustomTemplate = customTemplateMap.has(targetShop.id)
+        const templateLabel = hasCustomTemplate ? 'template produk' : 'template toko'
+        setProgressStep(`Membuat gambar utama (${templateLabel}): ${targetShop.name} (${i + 1}/${selectedShopIds.length})...`)
 
         const mainImageDataUrl = await generateMainProductImage({
           shop: targetShop,
           product,
           brand,
           transparentProductImageUrl: transparentImgUrl,
+          templateConfig: customTemplateMap.get(targetShop.id),
         })
 
         generatedList.push({

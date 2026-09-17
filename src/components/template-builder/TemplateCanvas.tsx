@@ -18,13 +18,16 @@ import {
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { uploadAsset } from '@/lib/supabase/storage'
-import { Shop } from '@/types'
+import { Shop, Product } from '@/types'
 
 const CANVAS_SIZE = 800 // Internal resolution (always 800x800)
 const VIEWPORT_PADDING = 40 // Padding around canvas in viewport
 
 interface TemplateCanvasProps {
   shop: Shop
+  product?: Product | null
+  initialProductTemplate?: any
+  backUrl?: string
 }
 
 const FONTS = [
@@ -37,7 +40,12 @@ const FONTS = [
   { name: 'Courier New', label: 'Courier New (Mono)' },
 ]
 
-export default function TemplateCanvas({ shop }: TemplateCanvasProps) {
+export default function TemplateCanvas({
+  shop,
+  product,
+  initialProductTemplate,
+  backUrl,
+}: TemplateCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const fabricCanvasRef = useRef<fabric.Canvas | null>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
@@ -118,9 +126,17 @@ export default function TemplateCanvas({ shop }: TemplateCanvasProps) {
     })
 
     // Load existing template if available
-    if (shop.template_config && Object.keys(shop.template_config).length > 0) {
+    // Priority: initialProductTemplate -> shop.template_config -> setupDefaultLayout
+    const configToLoad =
+      initialProductTemplate && Object.keys(initialProductTemplate).length > 0
+        ? initialProductTemplate
+        : shop.template_config && Object.keys(shop.template_config).length > 0
+        ? shop.template_config
+        : null
+
+    if (configToLoad) {
       try {
-        canvas.loadFromJSON(shop.template_config, () => {
+        canvas.loadFromJSON(configToLoad, () => {
           if (isMountedRef.current && canvas.getContext()) {
             // Apply fit zoom after load
             const fitZ = calcFitZoom()
@@ -442,15 +458,33 @@ export default function TemplateCanvas({ shop }: TemplateCanvasProps) {
       })
       canvas.renderAll()
 
-      const { error } = await supabase
-        .from('shops')
-        .update({
-          template_config: jsonConfig,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', shop.id)
+      if (product) {
+        // Save/upsert to product_templates table
+        const { error } = await supabase
+          .from('product_templates')
+          .upsert(
+            {
+              product_id: product.id,
+              shop_id: shop.id,
+              template_config: jsonConfig,
+              updated_at: new Date().toISOString(),
+            },
+            { onConflict: 'product_id,shop_id' }
+          )
 
-      if (error) throw error
+        if (error) throw error
+      } else {
+        // Save to shops table
+        const { error } = await supabase
+          .from('shops')
+          .update({
+            template_config: jsonConfig,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', shop.id)
+
+        if (error) throw error
+      }
 
       setSaveSuccess(true)
       setTimeout(() => setSaveSuccess(false), 3000)
@@ -467,17 +501,31 @@ export default function TemplateCanvas({ shop }: TemplateCanvasProps) {
       <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl bg-white p-4 shadow-sm shrink-0">
         <div className="flex items-center gap-3">
           <Link
-            href="/dashboard/shops"
+            href={backUrl || (product ? '/dashboard/products' : '/dashboard/shops')}
             className="rounded-xl border border-gray-200 p-2 text-gray-600 hover:bg-gray-50"
           >
             <ArrowLeft className="h-5 w-5" />
           </Link>
           <div>
             <h1 className="text-xl font-bold text-gray-900">
-              Template Builder: <span className="text-indigo-600">{shop.name}</span>
+              {product ? (
+                <>
+                  Template Gambar Produk: <span className="text-indigo-600">{product.name}</span>
+                </>
+              ) : (
+                <>
+                  Template Builder: <span className="text-indigo-600">{shop.name}</span>
+                </>
+              )}
             </h1>
             <p className="text-xs text-gray-500">
-              Atur posisi elemen, background image, font, dan ukuran untuk gambar produk toko ini.
+              {product ? (
+                <>
+                  Kustomisasi template untuk toko <span className="font-semibold text-gray-700">{shop.name}</span>. Template default toko tidak akan terpengaruh.
+                </>
+              ) : (
+                'Atur posisi elemen, background image, font, dan ukuran untuk gambar produk toko ini.'
+              )}
             </p>
           </div>
         </div>

@@ -5,6 +5,7 @@ import { Product, Brand } from '@/types'
 import { createClient } from '@/lib/supabase/client'
 import ProductModal from '@/components/products/ProductModal'
 import GenerateImageModal from '@/components/products/GenerateImageModal'
+import ProductShopSelectModal from '@/components/products/ProductShopSelectModal'
 import {
   Plus,
   Edit2,
@@ -15,6 +16,7 @@ import {
   Image as ImageIcon,
   Search,
   ChevronDown,
+  Palette,
 } from 'lucide-react'
 
 const PAGE_SIZE = 20
@@ -37,6 +39,8 @@ export default function ProductsPage() {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
   const [isGenerateModalOpen, setIsGenerateModalOpen] = useState(false)
   const [productForGeneration, setProductForGeneration] = useState<Product | null>(null)
+  const [isShopSelectModalOpen, setIsShopSelectModalOpen] = useState(false)
+  const [productForTemplate, setProductForTemplate] = useState<Product | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
 
   const supabase = createClient()
@@ -114,6 +118,11 @@ export default function ProductsPage() {
   const handleOpenGenerateModal = (prod: Product) => {
     setProductForGeneration(prod)
     setIsGenerateModalOpen(true)
+  }
+
+  const handleOpenEditImageModal = (prod: Product) => {
+    setProductForTemplate(prod)
+    setIsShopSelectModalOpen(true)
   }
 
   const handleDeleteProduct = async (id: string) => {
@@ -259,6 +268,13 @@ export default function ProductsPage() {
                         <Sparkles className="mr-1.5 h-3.5 w-3.5" />
                         Generate Images
                       </button>
+                      <button
+                        onClick={() => handleOpenEditImageModal(prod)}
+                        className="flex w-full items-center justify-center rounded-xl bg-white/95 px-3 py-1.5 text-xs font-semibold text-gray-800 shadow transition hover:bg-white hover:text-indigo-600"
+                      >
+                        <Palette className="mr-1.5 h-3.5 w-3.5 text-indigo-600" />
+                        Edit Image
+                      </button>
                       <div className="flex w-full items-center justify-center gap-2">
                         <button
                           onClick={() => handleEditProduct(prod)}
@@ -297,12 +313,21 @@ export default function ProductsPage() {
                     </div>
                     <div className="mt-3 flex items-center justify-between border-t border-gray-50 pt-2 text-[11px] text-gray-400">
                       <span>{new Date(prod.created_at).toLocaleDateString()}</span>
-                      <button
-                        onClick={() => handleOpenGenerateModal(prod)}
-                        className="font-medium text-indigo-600 hover:text-indigo-700 flex items-center"
-                      >
-                        <Sparkles className="mr-1 h-3 w-3" /> Generate
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => handleOpenEditImageModal(prod)}
+                          className="font-medium text-gray-600 hover:text-indigo-600 flex items-center"
+                          title="Edit Image Template"
+                        >
+                          <Palette className="mr-1 h-3 w-3" /> Edit Image
+                        </button>
+                        <button
+                          onClick={() => handleOpenGenerateModal(prod)}
+                          className="font-medium text-indigo-600 hover:text-indigo-700 flex items-center"
+                        >
+                          <Sparkles className="mr-1 h-3 w-3" /> Generate
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -345,6 +370,12 @@ export default function ProductsPage() {
         product={productForGeneration}
         brand={productForGeneration ? getBrandById(productForGeneration.brand_id) : null}
         onClose={() => setIsGenerateModalOpen(false)}
+      />
+
+      <ProductShopSelectModal
+        isOpen={isShopSelectModalOpen}
+        product={productForTemplate}
+        onClose={() => setIsShopSelectModalOpen(false)}
       />
     </div>
   )

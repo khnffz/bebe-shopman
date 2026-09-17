@@ -111,11 +111,12 @@ export async function processProductImageOffline(imageUrl: string): Promise<Blob
   return await res.blob()
 }
 
-interface GenerateMainImageParams {
+export interface GenerateMainImageParams {
   shop: Shop
   product: Product
   brand: Brand | null
   transparentProductImageUrl: string
+  templateConfig?: any
 }
 
 /**
@@ -127,6 +128,7 @@ export async function generateMainProductImage({
   product,
   brand,
   transparentProductImageUrl,
+  templateConfig: customTemplateConfig,
 }: GenerateMainImageParams): Promise<string> {
   if (!transparentProductImageUrl) {
     throw new Error('Gambar produk belum tersedia. Silakan upload gambar produk terlebih dahulu.')
@@ -144,7 +146,11 @@ export async function generateMainProductImage({
         backgroundColor: '#ffffff',
       })
 
-      const templateConfig = shop.template_config
+      // Priority: customTemplateConfig (Product Template) -> shop.template_config (Shop Template)
+      const templateConfig =
+        customTemplateConfig && Object.keys(customTemplateConfig).length > 0
+          ? customTemplateConfig
+          : shop.template_config
 
       if (templateConfig && Object.keys(templateConfig).length > 0) {
         staticCanvas.loadFromJSON(templateConfig, async () => {
