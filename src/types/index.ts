@@ -23,6 +23,7 @@ export interface Product {
   name: string
   description: string | null
   raw_image_url: string | null
+  generated_image_url?: string | null
   created_at: string
   updated_at: string
 }
@@ -32,6 +33,7 @@ export interface ProductTemplate {
   product_id: string
   shop_id: string
   template_config: any
+  generated_image_url?: string | null
   created_at: string
   updated_at: string
 }
