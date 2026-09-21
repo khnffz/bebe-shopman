@@ -50,7 +50,7 @@ export default function ProductsPage() {
     supabase.from('brands').select('*').order('name').then(({ data }) => {
       if (data) setBrands(data)
     })
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const fetchProducts = useCallback(
@@ -235,12 +235,12 @@ export default function ProductsPage() {
                   key={prod.id}
                   className="group relative flex flex-col overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-xl"
                 >
-                  {/* Product Raw Image View */}
+                  {/* Product Image View (Generated prioritized, fallback to Raw) */}
                   <div className="relative flex h-52 w-full items-center justify-center bg-gray-50/90 p-4">
-                    {prod.raw_image_url ? (
+                    {prod.generated_image_url || prod.raw_image_url ? (
                       /* eslint-disable-next-line @next/next/no-img-element */
                       <img
-                        src={prod.raw_image_url}
+                        src={prod.generated_image_url || prod.raw_image_url!}
                         alt={prod.name}
                         loading="lazy"
                         className="max-h-full max-w-full object-contain transition-transform duration-300 group-hover:scale-105"
@@ -248,14 +248,14 @@ export default function ProductsPage() {
                     ) : (
                       <div className="flex flex-col items-center justify-center text-gray-400">
                         <ImageIcon className="h-10 w-10 stroke-[1.5]" />
-                        <span className="mt-1 text-xs">No Raw Image</span>
+                        <span className="mt-1 text-xs">No Image</span>
                       </div>
                     )}
 
-                    {/* Brand Badge */}
-                    {brand && (
-                      <div className="absolute top-3 left-3 rounded-full bg-white/90 px-2.5 py-1 text-xs font-semibold text-gray-700 shadow-sm backdrop-blur-sm">
-                        {brand.name}
+                    {/* Generated Badge */}
+                    {prod.generated_image_url && (
+                      <div className="absolute top-3 right-3 flex items-center gap-1 rounded-full bg-indigo-600/90 px-2 py-0.5 text-[10px] font-medium text-white shadow-sm backdrop-blur-sm">
+                        <Sparkles className="h-3 w-3" />
                       </div>
                     )}
 
@@ -370,6 +370,9 @@ export default function ProductsPage() {
         product={productForGeneration}
         brand={productForGeneration ? getBrandById(productForGeneration.brand_id) : null}
         onClose={() => setIsGenerateModalOpen(false)}
+        onSuccess={() => {
+          fetchProducts(searchQuery, filterBrandId, 0, false)
+        }}
       />
 
       <ProductShopSelectModal

@@ -16,12 +16,14 @@ import {
   ExternalLink,
 } from 'lucide-react'
 import { generateMainProductImage } from '@/lib/engine/generator'
+import { uploadDataUrlAsset } from '@/lib/supabase/storage'
 
 interface GenerateImageModalProps {
   isOpen: boolean
   product: Product | null
   brand: Brand | null
   onClose: () => void
+  onSuccess?: () => void
 }
 
 interface GeneratedResult {
@@ -36,6 +38,7 @@ export default function GenerateImageModal({
   product,
   brand,
   onClose,
+  onSuccess,
 }: GenerateImageModalProps) {
   const [shops, setShops] = useState<Shop[]>([])
   const [selectedShopIds, setSelectedShopIds] = useState<string[]>([])
@@ -143,16 +146,53 @@ export default function GenerateImageModal({
           templateConfig: customTemplateMap.get(targetShop.id),
         })
 
+        setProgressStep(`Menyimpan gambar hasil generate: ${targetShop.name}...`)
+
+        // Upload generated image to Supabase Storage
+        const { url: uploadedUrl, error: uploadErr } = await uploadDataUrlAsset(
+          mainImageDataUrl,
+          'products',
+          `generated-${product.id.slice(0, 8)}-${targetShop.id.slice(0, 8)}`
+        )
+
+        if (uploadErr) {
+          console.error('Failed to upload generated asset:', uploadErr)
+        }
+
+        // Save generated image URL to product_templates table
+        if (uploadedUrl) {
+          const existingConfig = customTemplateMap.get(targetShop.id)
+          const { error: upsertErr } = await supabase
+            .from('product_templates')
+            .upsert(
+              {
+                product_id: product.id,
+                shop_id: targetShop.id,
+                template_config: existingConfig || targetShop.template_config || {},
+                generated_image_url: uploadedUrl,
+                updated_at: new Date().toISOString(),
+              },
+              { onConflict: 'product_id,shop_id' }
+            )
+
+          if (upsertErr) {
+            console.error('Failed to save to product_templates:', upsertErr)
+          }
+        }
+
         generatedList.push({
           shopId: targetShop.id,
           shopName: targetShop.name,
           shopLogoUrl: targetShop.logo_url,
-          imageUrl: mainImageDataUrl,
+          imageUrl: uploadedUrl || mainImageDataUrl,
         })
       }
 
       setResults(generatedList)
       setProgressStep('Selesai!')
+      if (onSuccess) {
+        onSuccess()
+      }
     } catch (err: any) {
       console.error(err)
       setErrorMessage(err.message || 'Terjadi kesalahan saat memproses gambar.')
