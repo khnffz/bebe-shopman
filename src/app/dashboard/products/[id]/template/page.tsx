@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, use } from 'react'
-import { Shop, Product } from '@/types'
+import { Shop, Product, Brand } from '@/types'
 import { createClient } from '@/lib/supabase/client'
 import dynamic from 'next/dynamic'
 import { Loader2, ArrowLeft } from 'lucide-react'
@@ -32,6 +32,7 @@ export default function ProductTemplatePage({
 
   const [product, setProduct] = useState<Product | null>(null)
   const [shop, setShop] = useState<Shop | null>(null)
+  const [brand, setBrand] = useState<Brand | null>(null)
   const [initialProductTemplate, setInitialProductTemplate] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -76,6 +77,19 @@ export default function ProductTemplatePage({
         if (templateRes.data?.template_config) {
           setInitialProductTemplate(templateRes.data.template_config)
         }
+
+        // Fetch brand data using product's brand_id
+        if (productRes.data.brand_id) {
+          const brandRes = await supabase
+            .from('brands')
+            .select('*')
+            .eq('id', productRes.data.brand_id)
+            .single()
+
+          if (!brandRes.error && brandRes.data) {
+            setBrand(brandRes.data)
+          }
+        }
       } catch (err: any) {
         setError(err.message || 'Terjadi kesalahan saat memuat data.')
       } finally {
@@ -115,6 +129,7 @@ export default function ProductTemplatePage({
     <TemplateCanvas
       shop={shop}
       product={product}
+      brand={brand}
       initialProductTemplate={initialProductTemplate}
       backUrl="/dashboard/products"
     />

@@ -14,11 +14,13 @@ import {
   Loader2,
   CheckCircle,
   Upload,
+  Download,
+  RefreshCw,
 } from 'lucide-react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { uploadAsset } from '@/lib/supabase/storage'
-import { Shop, Product } from '@/types'
+import { Shop, Product, Brand } from '@/types'
 
 const CANVAS_SIZE = 800 // Internal resolution (always 800x800)
 const VIEWPORT_PADDING = 40 // Padding around canvas in viewport
@@ -26,6 +28,7 @@ const VIEWPORT_PADDING = 40 // Padding around canvas in viewport
 interface TemplateCanvasProps {
   shop: Shop
   product?: Product | null
+  brand?: Brand | null
   initialProductTemplate?: any
   backUrl?: string
 }
@@ -40,9 +43,36 @@ const FONTS = [
   { name: 'Courier New', label: 'Courier New (Mono)' },
 ]
 
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+function loadFabricImage(url: string): Promise<fabric.Image> {
+  return new Promise((resolve, reject) => {
+    fabric.Image.fromURL(
+      url,
+      (img) => {
+        if (!img) reject(new Error(`Gagal memuat gambar: ${url}`))
+        else resolve(img)
+      },
+      { crossOrigin: 'anonymous' }
+    )
+  })
+}
+
+function localFileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = reject
+    reader.readAsDataURL(file)
+  })
+}
+
+// ─── Main Component ──────────────────────────────────────────────────────────
+
 export default function TemplateCanvas({
   shop,
   product,
+  brand,
   initialProductTemplate,
   backUrl,
 }: TemplateCanvasProps) {
@@ -50,47 +80,167 @@ export default function TemplateCanvas({
   const fabricCanvasRef = useRef<fabric.Canvas | null>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
   const bgInputRef = useRef<HTMLInputElement>(null)
+  const productImgInputRef = useRef<HTMLInputElement>(null)
+  const brandLogoInputRef = useRef<HTMLInputElement>(null)
   const isMountedRef = useRef(true)
 
+  // Canvas selection state
   const [selectedObject, setSelectedObject] = useState<fabric.Object | null>(null)
   const [textColor, setTextColor] = useState('#1e293b')
   const [fontSize, setFontSize] = useState(32)
   const [fontFamily, setFontFamily] = useState('Comfortaa')
   const [textAlign, setTextAlign] = useState('left')
+
+  // Action state
   const [saving, setSaving] = useState(false)
   const [saveSuccess, setSaveSuccess] = useState(false)
   const [uploadingBg, setUploadingBg] = useState(false)
+  const [exporting, setExporting] = useState(false)
 
+  // Preview override state (local, not persisted to DB)
+  const [previewProductName, setPreviewProductName] = useState(product?.name ?? '')
+  const [previewProductDesc, setPreviewProductDesc] = useState(product?.description ?? '')
+  const [previewProductImageUrl, setPreviewProductImageUrl] = useState<string | null>(
+    product?.raw_image_url ?? null
+  )
+  const [previewBrandLogoUrl, setPreviewBrandLogoUrl] = useState<string | null>(
+    brand?.logo_url ?? null
+  )
 
   const supabase = createClient()
 
-  /**
-   * Apply zoom using Fabric.js native zoom — keeps mouse coords aligned.
-   * The canvas element is resized to (CANVAS_SIZE * zoom), while the
-   * internal coordinate space stays 800x800.
-   */
+  // ── Zoom helpers ────────────────────────────────────────────────────────────
+
   const applyZoom = useCallback((canvas: fabric.Canvas, zoom: number) => {
     canvas.setZoom(zoom)
-    canvas.setDimensions(
-      { width: CANVAS_SIZE * zoom, height: CANVAS_SIZE * zoom },
-    )
+    canvas.setDimensions({ width: CANVAS_SIZE * zoom, height: CANVAS_SIZE * zoom })
     canvas.renderAll()
   }, [])
 
-  /**
-   * Calculate the zoom that makes the 800x800 canvas fit inside the viewport container.
-   */
   const calcFitZoom = useCallback(() => {
     const vp = viewportRef.current
     if (!vp) return 0.6
     const availW = vp.clientWidth - VIEWPORT_PADDING * 2
     const availH = vp.clientHeight - VIEWPORT_PADDING * 2
     const fit = Math.min(availW / CANVAS_SIZE, availH / CANVAS_SIZE)
-    // Clamp between 0.3 and 1.5
     return Math.round(Math.min(1.5, Math.max(0.3, fit)) * 100) / 100
   }, [])
 
-  // Initialize Fabric Canvas (800x800 internal resolution)
+  // ── Preview overlay logic ───────────────────────────────────────────────────
+
+  /** Remove all overlay preview objects from canvas (tagged with isPreviewOverlay). */
+  const clearPreviewOverlays = useCallback((canvas: fabric.Canvas) => {
+    const toRemove = canvas.getObjects().filter((o) => (o as any).isPreviewOverlay)
+    toRemove.forEach((o) => canvas.remove(o))
+  }, [])
+
+  /**
+   * Render live preview overlays on top of placeholders.
+   * This does NOT modify the placeholder objects themselves — preserving template_config.
+   */
+  const renderPreviewOverlays = useCallback(
+    async (
+      canvas: fabric.Canvas,
+      opts: {
+        productName: string
+        productDesc: string
+        productImageUrl: string | null
+        brandLogoUrl: string | null
+      }
+    ) => {
+      if (!canvas.getContext()) return
+
+      clearPreviewOverlays(canvas)
+
+      const objects = canvas.getObjects()
+
+      for (const obj of objects) {
+        const pType = (obj as any).placeholderType
+        if (!pType) continue
+
+        if (pType === 'product_image' && opts.productImageUrl) {
+          try {
+            const prodImg = await loadFabricImage(opts.productImageUrl)
+            const targetW = (obj.width || 400) * (obj.scaleX || 1)
+            const targetH = (obj.height || 400) * (obj.scaleY || 1)
+            const scale =
+              Math.min(targetW / (prodImg.width || 1), targetH / (prodImg.height || 1)) * 0.92
+
+            prodImg.set({
+              left: (obj.left || 0) + (targetW - (prodImg.width || 1) * scale) / 2,
+              top: (obj.top || 0) + (targetH - (prodImg.height || 1) * scale) / 2,
+              scaleX: scale,
+              scaleY: scale,
+              selectable: true,
+              evented: true,
+              // @ts-ignore
+              isPreviewOverlay: true,
+              placeholderType: 'product_image_overlay',
+            })
+            canvas.add(prodImg)
+          } catch (e) {
+            console.warn('Preview: could not render product image', e)
+          }
+        } else if (pType === 'brand_logo' && opts.brandLogoUrl) {
+          try {
+            const brandImg = await loadFabricImage(opts.brandLogoUrl)
+            const targetW = (obj.width || 120) * (obj.scaleX || 1)
+            const targetH = (obj.height || 60) * (obj.scaleY || 1)
+            const scale = Math.min(targetW / (brandImg.width || 1), targetH / (brandImg.height || 1))
+
+            brandImg.set({
+              left: (obj.left || 0) + (targetW - (brandImg.width || 1) * scale) / 2,
+              top: (obj.top || 0) + (targetH - (brandImg.height || 1) * scale) / 2,
+              scaleX: scale,
+              scaleY: scale,
+              selectable: true,
+              evented: true,
+              // @ts-ignore
+              isPreviewOverlay: true,
+              placeholderType: 'brand_logo_overlay',
+            })
+            canvas.add(brandImg)
+          } catch (e) {
+            console.warn('Preview: could not render brand logo', e)
+          }
+        } else if (pType === 'shop_logo' && shop.logo_url) {
+          try {
+            const shopImg = await loadFabricImage(shop.logo_url)
+            const targetW = (obj.width || 120) * (obj.scaleX || 1)
+            const targetH = (obj.height || 60) * (obj.scaleY || 1)
+            const scale = Math.min(targetW / (shopImg.width || 1), targetH / (shopImg.height || 1))
+
+            shopImg.set({
+              left: (obj.left || 0) + (targetW - (shopImg.width || 1) * scale) / 2,
+              top: (obj.top || 0) + (targetH - (shopImg.height || 1) * scale) / 2,
+              scaleX: scale,
+              scaleY: scale,
+              selectable: true,
+              evented: true,
+              // @ts-ignore
+              isPreviewOverlay: true,
+              placeholderType: 'shop_logo_overlay',
+            })
+            canvas.add(shopImg)
+          } catch (e) {
+            console.warn('Preview: could not render shop logo', e)
+          }
+        } else if (pType === 'product_title' && obj.type === 'textbox') {
+          const tb = obj as fabric.Textbox
+          tb.set({ text: opts.productName || product?.name || '' })
+        } else if (pType === 'product_desc' && obj.type === 'textbox') {
+          const tb = obj as fabric.Textbox
+          tb.set({ text: opts.productDesc || product?.description || '' })
+        }
+      }
+
+      canvas.renderAll()
+    },
+    [clearPreviewOverlays, product, shop.logo_url]
+  )
+
+  // ── Canvas init ─────────────────────────────────────────────────────────────
+
   useEffect(() => {
     isMountedRef.current = true
     if (!canvasRef.current) return
@@ -125,8 +275,6 @@ export default function TemplateCanvas({
       if (isMountedRef.current) setSelectedObject(null)
     })
 
-    // Load existing template if available
-    // Priority: initialProductTemplate -> shop.template_config -> setupDefaultLayout
     const configToLoad =
       initialProductTemplate && Object.keys(initialProductTemplate).length > 0
         ? initialProductTemplate
@@ -134,35 +282,38 @@ export default function TemplateCanvas({
         ? shop.template_config
         : null
 
+    const afterLoad = async () => {
+      if (!isMountedRef.current || !canvas.getContext()) return
+      const fitZ = calcFitZoom()
+      applyZoom(canvas, fitZ)
+
+      // Render live preview overlays after template is loaded
+      if (product) {
+        await renderPreviewOverlays(canvas, {
+          productName: product.name,
+          productDesc: product.description ?? '',
+          productImageUrl: product.raw_image_url,
+          brandLogoUrl: brand?.logo_url ?? null,
+        })
+      }
+    }
+
     if (configToLoad) {
       try {
-        canvas.loadFromJSON(configToLoad, () => {
-          if (isMountedRef.current && canvas.getContext()) {
-            // Apply fit zoom after load
-            const fitZ = calcFitZoom()
-            applyZoom(canvas, fitZ)
-          }
-        })
+        canvas.loadFromJSON(configToLoad, () => afterLoad())
       } catch (err) {
         console.error('Failed to load template config:', err)
         if (isMountedRef.current && canvas.getContext()) {
           setupDefaultLayout(canvas)
-          const fitZ = calcFitZoom()
-          applyZoom(canvas, fitZ)
+          afterLoad()
         }
       }
     } else {
       setupDefaultLayout(canvas)
-      // Defer fit zoom so viewport has rendered
-      requestAnimationFrame(() => {
-        if (isMountedRef.current && canvas.getContext()) {
-          const fitZ = calcFitZoom()
-          applyZoom(canvas, fitZ)
-        }
-      })
+      requestAnimationFrame(() => afterLoad())
     }
 
-    // Auto-fit on viewport resize (ResizeObserver)
+    // Auto-fit on resize
     const vp = viewportRef.current
     let ro: ResizeObserver | null = null
     if (vp) {
@@ -187,7 +338,8 @@ export default function TemplateCanvas({
       }
       fabricCanvasRef.current = null
     }
-  }, [shop, applyZoom, calcFitZoom])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shop])
 
   const setupDefaultLayout = (canvas: fabric.Canvas) => {
     if (!canvas.getContext()) return
@@ -250,7 +402,7 @@ export default function TemplateCanvas({
     })
 
     // 4. Product Title Textbox (Bottom)
-    const titleText = new fabric.Textbox('Product Title Here\n(Support Multiline)', {
+    const titleText = new fabric.Textbox(product?.name || 'Product Title Here', {
       left: 40,
       top: 640,
       width: 720,
@@ -267,7 +419,8 @@ export default function TemplateCanvas({
     canvas.renderAll()
   }
 
-  // --- Background Upload & Setting ---
+  // ── Background Upload ────────────────────────────────────────────────────────
+
   const handleBackgroundUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
@@ -275,9 +428,7 @@ export default function TemplateCanvas({
     setUploadingBg(true)
     try {
       const { url, error } = await uploadAsset(file, 'shops')
-      if (error || !url) {
-        throw new Error(error || 'Failed to upload background image')
-      }
+      if (error || !url) throw new Error(error || 'Failed to upload background image')
 
       const canvas = fabricCanvasRef.current
       if (canvas && canvas.getContext()) {
@@ -326,7 +477,85 @@ export default function TemplateCanvas({
     }
   }
 
-  // --- Canvas Actions ---
+  // ── Preview Override Handlers ─────────────────────────────────────────────────
+
+  /** Refresh preview overlays with current override state */
+  const refreshPreview = useCallback(
+    async (overrides?: {
+      productName?: string
+      productDesc?: string
+      productImageUrl?: string | null
+      brandLogoUrl?: string | null
+    }) => {
+      const canvas = fabricCanvasRef.current
+      if (!canvas || !canvas.getContext()) return
+
+      await renderPreviewOverlays(canvas, {
+        productName: overrides?.productName ?? previewProductName,
+        productDesc: overrides?.productDesc ?? previewProductDesc,
+        productImageUrl: overrides?.productImageUrl !== undefined ? overrides.productImageUrl : previewProductImageUrl,
+        brandLogoUrl: overrides?.brandLogoUrl !== undefined ? overrides.brandLogoUrl : previewBrandLogoUrl,
+      })
+    },
+    [renderPreviewOverlays, previewProductName, previewProductDesc, previewProductImageUrl, previewBrandLogoUrl]
+  )
+
+  const handleProductImageOverride = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    try {
+      const dataUrl = await localFileToDataUrl(file)
+      setPreviewProductImageUrl(dataUrl)
+      await refreshPreview({ productImageUrl: dataUrl })
+    } catch (err) {
+      console.error('Failed to load product image override:', err)
+    } finally {
+      if (productImgInputRef.current) productImgInputRef.current.value = ''
+    }
+  }
+
+  const handleBrandLogoOverride = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    try {
+      const dataUrl = await localFileToDataUrl(file)
+      setPreviewBrandLogoUrl(dataUrl)
+      await refreshPreview({ brandLogoUrl: dataUrl })
+    } catch (err) {
+      console.error('Failed to load brand logo override:', err)
+    } finally {
+      if (brandLogoInputRef.current) brandLogoInputRef.current.value = ''
+    }
+  }
+
+  const handleProductNameChange = async (value: string) => {
+    setPreviewProductName(value)
+    // Live-update product_title textboxes on canvas
+    const canvas = fabricCanvasRef.current
+    if (!canvas || !canvas.getContext()) return
+    canvas.getObjects().forEach((obj) => {
+      if ((obj as any).placeholderType === 'product_title' && obj.type === 'textbox') {
+        ;(obj as fabric.Textbox).set({ text: value })
+      }
+    })
+    canvas.renderAll()
+  }
+
+  const handleProductDescChange = async (value: string) => {
+    setPreviewProductDesc(value)
+    // Live-update product_desc textboxes on canvas
+    const canvas = fabricCanvasRef.current
+    if (!canvas || !canvas.getContext()) return
+    canvas.getObjects().forEach((obj) => {
+      if ((obj as any).placeholderType === 'product_desc' && obj.type === 'textbox') {
+        ;(obj as fabric.Textbox).set({ text: value })
+      }
+    })
+    canvas.renderAll()
+  }
+
+  // ── Canvas Actions ───────────────────────────────────────────────────────────
+
   const addText = (type: 'title' | 'description' | 'custom') => {
     const canvas = fabricCanvasRef.current
     if (!canvas || !canvas.getContext()) return
@@ -337,12 +566,12 @@ export default function TemplateCanvas({
     let font = 'Comfortaa'
 
     if (type === 'title') {
-      textContent = 'Product Title Placeholder'
+      textContent = previewProductName || 'Product Title Placeholder'
       size = 28
       placeholderType = 'product_title'
       font = 'Comfortaa'
     } else if (type === 'description') {
-      textContent = 'Short product description or features goes here.'
+      textContent = previewProductDesc || 'Short product description or features goes here.'
       size = 16
       placeholderType = 'product_desc'
       font = 'Inter'
@@ -433,7 +662,7 @@ export default function TemplateCanvas({
     }
   }
 
-
+  // ── Save Template ────────────────────────────────────────────────────────────
 
   const handleSaveTemplate = async () => {
     const canvas = fabricCanvasRef.current
@@ -448,7 +677,15 @@ export default function TemplateCanvas({
       canvas.setZoom(1)
       canvas.setDimensions({ width: CANVAS_SIZE, height: CANVAS_SIZE })
 
-      const jsonConfig = canvas.toJSON(['placeholderType', 'id', 'name'])
+      // Exclude preview overlay objects from saved config
+      const allObjects = canvas.getObjects()
+      const overlays = allObjects.filter((o) => (o as any).isPreviewOverlay)
+      overlays.forEach((o) => canvas.remove(o))
+
+      const jsonConfig = canvas.toJSON(['placeholderType', 'id', 'name', 'isPreviewOverlay'])
+
+      // Re-add overlays
+      overlays.forEach((o) => canvas.add(o))
 
       // Restore zoom
       canvas.setZoom(currentZoom)
@@ -495,6 +732,58 @@ export default function TemplateCanvas({
     }
   }
 
+  // ── Export PNG ───────────────────────────────────────────────────────────────
+
+  const handleExportPng = async () => {
+    const canvas = fabricCanvasRef.current
+    if (!canvas) return
+
+    setExporting(true)
+    try {
+      const currentZoom = canvas.getZoom()
+
+      // Reset to 1:1 for full resolution export
+      canvas.setZoom(1)
+      canvas.setDimensions({ width: CANVAS_SIZE, height: CANVAS_SIZE })
+      canvas.renderAll()
+
+      const dataUrl = canvas.toDataURL({ format: 'png', quality: 1 })
+
+      // Restore zoom
+      canvas.setZoom(currentZoom)
+      canvas.setDimensions({
+        width: CANVAS_SIZE * currentZoom,
+        height: CANVAS_SIZE * currentZoom,
+      })
+      canvas.renderAll()
+
+      // Build filename
+      const productSlug = (product?.name || 'template')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/(^-|-$)/g, '')
+      const shopSlug = shop.name
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/(^-|-$)/g, '')
+      const filename = `${productSlug}-${shopSlug}.png`
+
+      // Trigger download
+      const a = document.createElement('a')
+      a.href = dataUrl
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+    } catch (err: any) {
+      alert('Failed to export: ' + err.message)
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  // ── Render ───────────────────────────────────────────────────────────────────
+
   return (
     <div className="flex flex-col h-[calc(100vh-7rem)]">
       {/* Top Bar Header */}
@@ -530,17 +819,25 @@ export default function TemplateCanvas({
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           <button
             onClick={() => {
               const canvas = fabricCanvasRef.current
               if (canvas && canvas.getContext() && confirm('Reset canvas ke layout default?')) {
                 const z = canvas.getZoom()
                 canvas.clear()
-                canvas.setBackgroundColor('#ffffff', () => {
+                canvas.setBackgroundColor('#ffffff', async () => {
                   if (canvas.getContext()) {
                     setupDefaultLayout(canvas)
                     applyZoom(canvas, z)
+                    if (product) {
+                      await renderPreviewOverlays(canvas, {
+                        productName: previewProductName,
+                        productDesc: previewProductDesc,
+                        productImageUrl: previewProductImageUrl,
+                        brandLogoUrl: previewBrandLogoUrl,
+                      })
+                    }
                   }
                 })
               }
@@ -549,6 +846,19 @@ export default function TemplateCanvas({
           >
             <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
             Reset Layout
+          </button>
+
+          <button
+            onClick={handleExportPng}
+            disabled={exporting}
+            className="flex items-center rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+          >
+            {exporting ? (
+              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Download className="mr-1.5 h-3.5 w-3.5" />
+            )}
+            {exporting ? 'Exporting...' : 'Export PNG'}
           </button>
 
           <button
@@ -700,18 +1010,17 @@ export default function TemplateCanvas({
 
         {/* Center: Canvas Viewport — auto-fit */}
         <div className="flex flex-col lg:col-span-6 min-h-0 overflow-hidden">
-
-          {/* Viewport — canvas floats centered inside this area */}
           <div
             ref={viewportRef}
             className="flex-1 min-h-0 flex items-center justify-center rounded-2xl overflow-auto"
-            style={{ background: '#e8e8e8', backgroundImage: 'radial-gradient(circle, #d4d4d4 1px, transparent 1px)', backgroundSize: '20px 20px' }}
+            style={{
+              background: '#e8e8e8',
+              backgroundImage: 'radial-gradient(circle, #d4d4d4 1px, transparent 1px)',
+              backgroundSize: '20px 20px',
+            }}
           >
             <div className="shrink-0" style={{ padding: `${VIEWPORT_PADDING}px` }}>
-              <div
-                className="shadow-2xl"
-                style={{ lineHeight: 0 }}
-              >
+              <div className="shadow-2xl" style={{ lineHeight: 0 }}>
                 <canvas ref={canvasRef} />
               </div>
             </div>
@@ -720,6 +1029,125 @@ export default function TemplateCanvas({
 
         {/* Right: Property Inspector (scrollable) */}
         <div className="space-y-4 lg:col-span-3 overflow-y-auto max-h-full pl-1">
+
+          {/* ── Data Produk Override Panel ────────────────────────────────────── */}
+          {product && (
+            <div className="rounded-2xl bg-white p-5 shadow-sm border border-gray-100">
+              <h3 className="flex items-center gap-2 text-sm font-semibold text-gray-900">
+                <ImageIcon className="h-4 w-4 text-indigo-600" />
+                Data Produk
+              </h3>
+              <p className="mt-1 text-[11px] text-gray-400 leading-tight">
+                Override sementara untuk preview canvas. Tidak mengubah database.
+              </p>
+
+              <div className="mt-4 space-y-4">
+                {/* Product Raw Image Override */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1.5">
+                    Gambar Produk Raw
+                  </label>
+                  <input
+                    type="file"
+                    ref={productImgInputRef}
+                    onChange={handleProductImageOverride}
+                    accept="image/png, image/jpeg, image/webp"
+                    className="hidden"
+                  />
+                  {previewProductImageUrl && (
+                    <div className="mb-2 flex h-20 w-full items-center justify-center overflow-hidden rounded-xl border border-gray-200 bg-gray-50">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={previewProductImageUrl}
+                        alt="product preview"
+                        className="max-h-full max-w-full object-contain"
+                      />
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => productImgInputRef.current?.click()}
+                    className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-indigo-300 bg-indigo-50/50 py-2 text-xs font-medium text-indigo-700 hover:bg-indigo-50"
+                  >
+                    <Upload className="h-3.5 w-3.5" />
+                    {previewProductImageUrl ? 'Ganti Gambar' : 'Upload Gambar'}
+                  </button>
+                </div>
+
+                {/* Product Name Override */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    Nama Produk
+                  </label>
+                  <input
+                    type="text"
+                    value={previewProductName}
+                    onChange={(e) => handleProductNameChange(e.target.value)}
+                    className="w-full rounded-xl border border-gray-300 px-3 py-2 text-xs text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-200"
+                    placeholder="Nama produk..."
+                  />
+                </div>
+
+                {/* Product Description Override */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    Deskripsi Produk
+                  </label>
+                  <textarea
+                    value={previewProductDesc}
+                    onChange={(e) => handleProductDescChange(e.target.value)}
+                    rows={3}
+                    className="w-full resize-none rounded-xl border border-gray-300 px-3 py-2 text-xs text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-200"
+                    placeholder="Deskripsi produk..."
+                  />
+                </div>
+
+                {/* Brand Logo Override */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1.5">
+                    Logo Brand
+                  </label>
+                  <input
+                    type="file"
+                    ref={brandLogoInputRef}
+                    onChange={handleBrandLogoOverride}
+                    accept="image/png, image/jpeg, image/webp"
+                    className="hidden"
+                  />
+                  {previewBrandLogoUrl && (
+                    <div className="mb-2 flex h-12 w-full items-center justify-center overflow-hidden rounded-xl border border-gray-200 bg-gray-50 px-2">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={previewBrandLogoUrl}
+                        alt="brand logo preview"
+                        className="max-h-full max-w-full object-contain"
+                      />
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => brandLogoInputRef.current?.click()}
+                    className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-gray-300 bg-gray-50 py-2 text-xs font-medium text-gray-600 hover:bg-gray-100"
+                  >
+                    <Upload className="h-3.5 w-3.5" />
+                    {previewBrandLogoUrl ? 'Ganti Logo Brand' : 'Upload Logo Brand'}
+                  </button>
+                </div>
+
+                {/* Refresh Preview Button */}
+                <button
+                  type="button"
+                  onClick={() => refreshPreview()}
+                  className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-indigo-600 py-2 text-xs font-semibold text-white hover:bg-indigo-700"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  Refresh Preview
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ── Properties Panel ─────────────────────────────────────────────── */}
           <div className="rounded-2xl bg-white p-5 shadow-sm border border-gray-100">
             <h3 className="text-sm font-semibold text-gray-900">Properties</h3>
 
@@ -788,9 +1216,7 @@ export default function TemplateCanvas({
                           }}
                           className="h-8 w-8 cursor-pointer rounded-lg border border-gray-300 p-0.5"
                         />
-                        <span className="text-xs font-mono text-gray-600">
-                          {textColor}
-                        </span>
+                        <span className="text-xs font-mono text-gray-600">{textColor}</span>
                       </div>
                     </div>
 
@@ -806,10 +1232,11 @@ export default function TemplateCanvas({
                               setTextAlign(align)
                               updateActiveText('textAlign', align)
                             }}
-                            className={`flex-1 rounded-lg py-1 text-xs capitalize ${textAlign === align
+                            className={`flex-1 rounded-lg py-1 text-xs capitalize ${
+                              textAlign === align
                                 ? 'bg-white font-semibold text-indigo-600 shadow-sm'
                                 : 'text-gray-600 hover:text-gray-900'
-                              }`}
+                            }`}
                           >
                             {align}
                           </button>
@@ -831,7 +1258,7 @@ export default function TemplateCanvas({
               </div>
             ) : (
               <div className="mt-4 rounded-xl border border-dashed border-gray-200 p-6 text-center text-xs text-gray-400">
-                Klik elemen apa saja di kanvas untuk mengubah properti & ukurannya.
+                Klik elemen apa saja di kanvas untuk mengubah properti &amp; ukurannya.
               </div>
             )}
           </div>
